@@ -18,11 +18,7 @@ ix = None
 admins = ['Elizacat', 'SilentPenguin']
 
 def make_query(text):
-    orlist = []
-    for token in text.split():
-        orlist.append(Term('trigger', token))
-
-    return Or(orlist)
+    return Or([Term('trigger', t) for t in text.split()]) 
 
 class SockyIRCClient(client.IRCClient):
     def __init__(self, *args, **kwargs):
