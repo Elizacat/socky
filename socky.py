@@ -8,7 +8,8 @@ from whoosh.query import FuzzyTerm, Or
 from irclib.client import client
 from irclib.common.line import Line
 
-from collections import OrderedDict 
+from collections import OrderedDict
+import shelve
 import random
 import os, time
 import re
@@ -25,11 +26,12 @@ parser = re.compile("""
     \[(.+)\]        # Second portion
 """, re.VERBOSE|re.UNICODE)
 
-# XXX hardcoded
+# Bootstrap admins (always allowed)
 admins = ['Elizacat', 'SilentPenguin']
+cfgadmins = []
 
 def make_query(text):
-    return Or([FuzzyTerm('trigger', t) for t in text.split()]) 
+    return Or([FuzzyTerm('trigger', t, maxdist=2) for t in text.split()]) 
 
 def select_query(message, results):
     newresults = []
@@ -69,6 +71,9 @@ class SockyIRCClient(client.IRCClient):
 
         self.quitmme = False
         self.lastsaid = 0
+        self.db = kwargs.get('db', 'socky')
+
+        self.load_admins()
 
         self.add_dispatch_in('PRIVMSG', 1000, self.handle_privmsg)
 
@@ -136,12 +141,13 @@ class SockyIRCClient(client.IRCClient):
         # No account?
         if not account or account == '*': return
 
+        account = account.lower()
+
         # Not an admin?
-        if account not in admins: return
+        if account not in self.admins: return
 
         # Parse
         parsed = parser.match(message)
-        print(message, parsed)
         if not parsed: return
 
         # Split
@@ -177,7 +183,21 @@ class SockyIRCClient(client.IRCClient):
                 return
         elif type_ == '$':
             if firstparam == 'quit':
+                self.cmdwrite('PRIVMSG', (target, 'Adios'))
                 self.quitme(secondparam)
+            elif firstparam == 'reload':
+                secondparam = secondparam.lower()
+                if secondparam.startswith('admin'):
+                    self.load_admins()
+                    self.cmdwrite('PRIVMSG', (target, 'As you wish.'))
+            elif firstparam == 'addadmin':
+                secondparam = secondparam.lower()
+                self.add_admin(secondparam)
+                self.cmdwrite('PRIVMSG', (target, 'New boss added to the obedience file'))
+            elif firstparam == 'deladmin':
+                secondparam = secondparam.lower()
+                self.del_admin(secondparam)
+                self.cmdwrite('PRIVMSG', (target, 'Boss has been removed from the obedience file'))
             else:
                 return
         else:
@@ -198,7 +218,7 @@ class SockyIRCClient(client.IRCClient):
 
         writer.commit()
         if useaction:
-            self.ctcpwrite(target, 'ACTION', 'Your humour has been added to the hive')
+            self.ctcpwrite(target, 'ACTION', 'your humour has been added to the hive')
         else:
             self.cmdwrite('PRIVMSG', (target, 'Your humour has been added to the hive'))
 
@@ -280,6 +300,48 @@ class SockyIRCClient(client.IRCClient):
         writer.commit()
         self.cmdwrite('PRIVMSG', (target, 'Humour has been purged from the hive'))
 
+    def load_admins(self):
+        # Bootstrap admins
+        self.admins = set(x.lower() for x in admins)
+
+        s = shelve.open(self.db)
+        if 'admins' not in s:
+            s['admins'] = set()
+
+        self.admins = self.admins.union(admins)
+
+        s.close()
+
+    def add_admin(self, admin):
+        s = shelve.open(self.db)
+        if 'admins' not in s:
+            newadmins = set()
+        else:
+            newadmins = s['admins']
+
+        admin = admin.lower()
+
+        newadmins.add(admin)
+        s['admins'] = newadmins
+        s.close()
+
+        self.admins.add(admin) 
+
+    def del_admin(self, admin):
+        s = shelve.open(self.db)
+        if 'admins' not in s: return
+
+        admin = admin.lower()
+
+        if admin not in admins:
+            # Don't discard the bootstrapped admins!
+            self.admins.discard(admin)
+
+        newadmins = s['admins']
+        newadmins.discard(admin)
+        s['admins'] = newadmins
+        s.close()
+
 def run(instance):
     try:
         generator = instance.get_lines()
@@ -297,11 +359,12 @@ kwargs = {
     'use_sasl' : True,
     'sasl_username' : 'Socky',
     'sasl_pw' : 'changeme',
+    'db' : 'interlinked',
 }
 
 # Initalise the DB or create it
 if not os.path.exists("index"):
-    schema = Schema(trigger=TEXT(stored=True, chars=True, vector=True),
+    schema = Schema(trigger=TEXT(stored=True, chars=True, vector=True, spelling=True),
                     querytype=STORED, useaction=STORED, response=STORED)
     os.mkdir("index")
     ix = create_in("index", schema)
