@@ -130,7 +130,7 @@ class SockyIRCClient(client.IRCClient):
                                   where=target, mynick=self.current_nick)
 
         sayfunc = partial(self.cmdwrite, 'PRIVMSG', (target, response))
-        self.timer_oneshot('socky_spew', random.randint(20, 50) / 10, sayfunc)
+        self.timer_oneshot('socky_spew', random.randint(10, 50) / 10, sayfunc)
 
         self.lastsaid = time.time()
 
