@@ -53,6 +53,7 @@ def select_query(message, results):
 
         newresults.append(response)
 
+    if not newresults: return None
     return random.choice(newresults)
 
 def build_response(response, **kwargs):
@@ -116,9 +117,11 @@ class SockyIRCClient(client.IRCClient):
         results = searcher.search(query)
         if len(results) == 0: return
 
-        response = build_response(select_query(message, results),
-                                  who=line.hostmask.nick, where=target,
-                                  mynick=self.current_nick)
+        response = select_query(message, results)
+        if not response: return
+
+        response = build_response(response, who=line.hostmask.nick,
+                                  where=target, mynick=self.current_nick)
         self.cmdwrite('PRIVMSG', (target, response))
 
         self.lastsaid = time.time()
@@ -202,7 +205,7 @@ class SockyIRCClient(client.IRCClient):
     def handle_quotesearch(self, line, target, searchterm):
         limit = 425 # rather arbitrary
 
-        query = make_query(searchterm)
+        query = make_query(searchterm.lower())
         searcher = ix.searcher()
         results = searcher.search(query)
         if len(results) == 0:
