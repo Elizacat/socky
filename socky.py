@@ -45,7 +45,12 @@ def select_query(message, results):
         else:
             continue
 
-        newresults.append(result['response'])
+        # XXX FIXME a hack for now!
+        response = result['response']
+        if result.useaction == True:
+            response = response.format('\x01ACTION {r}\x01', r=response)
+
+        newresults.append(response)
 
     return random.choice(newresults)
 
