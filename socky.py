@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 
-from whoosh.fields import Schema, TEXT, STORED
+from whoosh.fields import Schema, TEXT, STORED, ID 
 from whoosh.index import create_in, open_dir
-from whoosh.query import FuzzyTerm, Or
+from whoosh.query import Term, FuzzyTerm, Or
+from whoosh.analysis import StemmingAnalyzer
 
 from irclib.client import client
 from irclib.common.line import Line
@@ -21,8 +22,8 @@ ix = None
 parser = re.compile("""
     \[(.+)\]        # Match first portion
     (?:\W+)?        # Eat whitespace
-    ([~!=@\$\-])    # Type of command (addition predicates ~!=), @ (search), -
-                    # (delete), or $ (command)
+    ([~!=@\-\#\$])  # Type of command (addition predicates ~!=), @ (search), -
+                    # (delete), # (chan event), or $ (command)
     (?:\W+)?        # Eat whitespace
     \[(.+)\]        # Second portion
 """, re.VERBOSE|re.UNICODE)
@@ -77,6 +78,72 @@ class SockyIRCClient(client.IRCClient):
         self.load_admins()
 
         self.add_dispatch_in('PRIVMSG', 1000, self.handle_privmsg)
+        self.add_dispatch_in('JOIN', 1000, self.handle_join)
+        self.add_dispatch_in('QUIT', 1000, self.handle_exit)
+        self.add_dispatch_in('PART', 1000, self.handle_exit)
+        self.add_dispatch_in('KICK', 1000, self.handle_kick)
+
+    def handle_join(self, discard, line):
+        if not line.hostmask: return
+
+        # 1 in 5 chance
+        if random.randint(1, 5) != 5: return
+
+        target = line.params[0]
+        nick = line.hostmask.nick
+
+        # Don't trigger on ourselves
+        if nick == self.current_nick: return
+
+        searcher = ix.searcher()
+        results = searcher.search(Term('querytype', 'JOIN'))
+        if len(results) == 0: return
+
+        response = build_response(response, who=nick, where=target,
+                                  mynick=self.current_nick)
+        sayfunc = partial(self.cmdwrite, 'PRIVMSG', (target, response))
+        self.timer_oneshot('socky_joinspew', random.randint(10, 30) / 10, sayfunc)
+
+    def handle_exit(self, discard, line):
+        if not line.hostmask: return
+
+        # 1 in 5 chance
+        if random.randint(1, 5) != 5: return
+
+        target = line.params[0]
+        nick = line.hostmask.nick
+
+        # Don't trigger on ourselves
+        if nick == self.current_nick: return
+
+        searcher = ix.searcher
+        results = searcher.search(Term('querytype', 'EXIT'))
+        if len(results) == 0: return
+
+        response = build_response(response, who=nick, where=target,
+                                  mynick=self.current_nick)
+        sayfunc = partial(self.cmdwrite, 'PRIVMSG', (target, response))
+        self.timer_oneshot('socky_exitspew', random.randint(10, 30) / 10, sayfunc)
+
+    def handle_kick(self, discard, line):
+        if not line.hostmask: return
+        if not line.hostmask.nick: return
+
+        target = line.params[0]
+        nick = line.params[1]
+
+        # Don't trigger on ourselves
+        if nick == self.current_nick: return
+
+        searcher = ix.searcher
+        results = searcher.search(Term('querytype', 'EXIT'))
+        if len(results) == 0: return
+
+        response = build_response(response, who=nick, where=target,
+                                  mynick=self.current_nick)
+        sayfunc = partial(self.cmdwrite, 'PRIVMSG', (target, response))
+        self.timer_oneshot('socky_exitspew', random.randint(10, 30) / 10,
+                           sayfunc)
 
     def handle_privmsg(self, discard, line):
         if len(line.params) <= 1: return
@@ -112,11 +179,8 @@ class SockyIRCClient(client.IRCClient):
                 return
 
         # Check last said time
-        if time.time() - self.lastsaid < 15:
+        if time.time() - self.lastsaid < 60:
             return
-
-        # Lowercase for trigger search
-        message = message.lower()
 
         query = make_query(message)
         searcher = ix.searcher()
@@ -157,7 +221,7 @@ class SockyIRCClient(client.IRCClient):
         firstparam, type_, secondparam = parsed.groups()
         firstparam = firstparam.lower()
 
-        if type_ in ('=', '!', '~'):
+        if type_ in ('=', '!', '~', '#'):
             # Add
             if type_ == '=':
                 type_ = 'MATCHALL'
@@ -165,6 +229,8 @@ class SockyIRCClient(client.IRCClient):
                 type_ = 'LITERAL'
             elif type_ == '~':
                 type_ = 'FUZZY'
+            elif type_ == '#':
+                type_ = 'CHANEVENT'
             else:
                 return
 
@@ -211,6 +277,15 @@ class SockyIRCClient(client.IRCClient):
         self.cmdwrite('QUIT', (message,))
 
     def handle_quoteadd(self, line, target, trigger, type_, response, useaction):
+        if type_ == 'CHANEVENT':
+            if trigger.startswith('join'):
+                type_ = 'JOIN'
+            elif (trigger.startswith('part') or trigger.startswith('quit') or
+                  trigger.startswith('exit')):
+                type_ = 'EXIT'
+            else:
+                return
+
         writer = ix.writer()
         try:
             writer.add_document(trigger=trigger, querytype=type_,
@@ -367,8 +442,10 @@ kwargs = {
 
 # Initalise the DB or create it
 if not os.path.exists("index"):
-    schema = Schema(trigger=TEXT(stored=True, chars=True, vector=True, spelling=True),
-                    querytype=STORED, useaction=STORED, response=STORED)
+    analyzer = StemmingAnalyzer()
+    trigtype = TEXT(stored=True, chars=True, vector=True, analyzer=analyzer)
+    schema = Schema(trigger=trigtype,
+                    querytype=ID(stored=True), useaction=STORED, response=STORED)
     os.mkdir("index")
     ix = create_in("index", schema)
 else:
