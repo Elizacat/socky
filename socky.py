@@ -8,6 +8,7 @@ from whoosh.query import FuzzyTerm, Or
 from irclib.client import client
 from irclib.common.line import Line
 
+from functools import partial
 from collections import OrderedDict
 import shelve
 import random
@@ -127,7 +128,9 @@ class SockyIRCClient(client.IRCClient):
 
         response = build_response(response, who=line.hostmask.nick,
                                   where=target, mynick=self.current_nick)
-        self.cmdwrite('PRIVMSG', (target, response))
+
+        sayfunc = partial(self.cmdwrite, 'PRIVMSG', (target, response))
+        self.timer_oneshot('socky_spew', random.randint(20, 50) / 10, sayfunc)
 
         self.lastsaid = time.time()
 
