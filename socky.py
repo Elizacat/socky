@@ -99,6 +99,7 @@ class SockyIRCClient(client.IRCClient):
         results = searcher.search(Term('querytype', 'JOIN'))
         if len(results) == 0: return
 
+        response = random.choice(results)['response']
         response = build_response(response, who=nick, where=target,
                                   mynick=self.current_nick)
         sayfunc = partial(self.cmdwrite, 'PRIVMSG', (target, response))
@@ -116,10 +117,11 @@ class SockyIRCClient(client.IRCClient):
         # Don't trigger on ourselves
         if nick == self.current_nick: return
 
-        searcher = ix.searcher
+        searcher = ix.searcher()
         results = searcher.search(Term('querytype', 'EXIT'))
         if len(results) == 0: return
 
+        response = random.choice(results)['response']
         response = build_response(response, who=nick, where=target,
                                   mynick=self.current_nick)
         sayfunc = partial(self.cmdwrite, 'PRIVMSG', (target, response))
@@ -135,10 +137,11 @@ class SockyIRCClient(client.IRCClient):
         # Don't trigger on ourselves
         if nick == self.current_nick: return
 
-        searcher = ix.searcher
+        searcher = ix.searcher()
         results = searcher.search(Term('querytype', 'EXIT'))
         if len(results) == 0: return
 
+        response = random.choice(results)['response']
         response = build_response(response, who=nick, where=target,
                                   mynick=self.current_nick)
         sayfunc = partial(self.cmdwrite, 'PRIVMSG', (target, response))
