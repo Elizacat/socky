@@ -18,7 +18,7 @@ ix = None
 parser = re.compile("""
     \[(.+)\]        # Match first portion
     (?:\W+)?        # Eat whitespace
-    ([~!=@\$\-])      # Type of command (addition predicates ~!=), @ (search), -
+    ([~!=@\$\-])    # Type of command (addition predicates ~!=), @ (search), -
                     # (delete), or $ (command)
     (?:\W+)?        # Eat whitespace
     \[(.+)\]        # Second portion
