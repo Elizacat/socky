@@ -20,6 +20,13 @@ admins = ['Elizacat', 'SilentPenguin']
 def make_query(text):
     return Or([Term('trigger', t) for t in text.split()]) 
 
+def build_response(response, **kwargs):
+    # safe dictionary building
+    try:
+        return response.format(**kwargs)
+    except (KeyError, ValueError) as e:
+        return response
+
 class SockyIRCClient(client.IRCClient):
     def __init__(self, *args, **kwargs):
         client.IRCClient.__init__(self, *args, **kwargs)
@@ -73,7 +80,8 @@ class SockyIRCClient(client.IRCClient):
         # Best match wins
         # XXX this logic will need to change at some point to scan for literal
         # matches...
-        response = results[0]['response']
+        response = build_response(results[0]['response'], who=line.hostmask.nick,
+                                  where=target, mynick=self.current_nick)
         self.cmdwrite('PRIVMSG', (target, response))
 
         self.lastsaid = time.time()
