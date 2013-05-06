@@ -3,11 +3,12 @@
 
 from whoosh.fields import Schema, TEXT, STORED
 from whoosh.index import create_in, open_dir
-from whoosh.query import Term, Or
+from whoosh.query import FuzzyTerm, Or
 
 from irclib.client import client
 from irclib.common.line import Line
 
+import random
 import os, time
 import re
 
@@ -18,7 +19,21 @@ ix = None
 admins = ['Elizacat', 'SilentPenguin']
 
 def make_query(text):
-    return Or([Term('trigger', t) for t in text.split()]) 
+    return Or([FuzzyTerm('trigger', t) for t in text.split()]) 
+
+def select_query(message, results):
+    newresults = []
+    for result in results:
+        if result['querytype'] == 'MATCHALL':
+            # XXX is this correct?
+            if result['trigger'] not in message: continue
+        else:
+            # XXX
+            continue
+
+        newresults.append(result['response'])
+
+    return random.choice(newresults)
 
 def build_response(response, **kwargs):
     # safe dictionary building
@@ -74,14 +89,11 @@ class SockyIRCClient(client.IRCClient):
         query = make_query(message)
         searcher = ix.searcher()
         results = searcher.search(query)
-        print(results)
         if len(results) == 0: return
 
-        # Best match wins
-        # XXX this logic will need to change at some point to scan for literal
-        # matches...
-        response = build_response(results[0]['response'], who=line.hostmask.nick,
-                                  where=target, mynick=self.current_nick)
+        response = build_response(select_query(message, results),
+                                  who=line.hostmask.nick, where=target,
+                                  mynick=self.current_nick)
         self.cmdwrite('PRIVMSG', (target, response))
 
         self.lastsaid = time.time()
