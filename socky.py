@@ -8,6 +8,7 @@ from whoosh.query import FuzzyTerm, Or
 from irclib.client import client
 from irclib.common.line import Line
 
+from collections import OrderedDict 
 import random
 import os, time
 import re
@@ -47,8 +48,8 @@ def select_query(message, results):
 
         # XXX FIXME a hack for now!
         response = result['response']
-        if result.useaction == True:
-            response = response.format('\x01ACTION {r}\x01', r=response)
+        if result['useaction'] == True:
+            response = '\x01ACTION ' + response + '\x01'
 
         newresults.append(response)
 
@@ -158,8 +159,11 @@ class SockyIRCClient(client.IRCClient):
             self.handle_quoteadd(line, target, firstparam, type_, secondparam,
                                  useaction)
         elif type_ == '@':
-            # TODO - search
-            return
+            if firstparam == 'text':
+                self.handle_quotesearch(line, target, secondparam)
+            else:
+                # TODO other types, e.g. ID
+                return
         elif type_ == '-':
             # Delete
             if firstparam == 'all':
@@ -194,6 +198,55 @@ class SockyIRCClient(client.IRCClient):
             self.ctcpwrite(target, 'ACTION', 'Your humour has been added to the hive')
         else:
             self.cmdwrite('PRIVMSG', (target, 'Your humour has been added to the hive'))
+
+    def handle_quotesearch(self, line, target, searchterm):
+        limit = 425 # rather arbitrary
+
+        query = make_query(searchterm)
+        searcher = ix.searcher()
+        results = searcher.search(query)
+        if len(results) == 0:
+            self.cmdwrite('PRIVMSG', (target, 'Drawing a blank here :/'))
+            return
+
+        responses = OrderedDict()
+        for index, result in enumerate(results):
+            trigger = result['trigger']
+            response = result['response']
+            querytype = result['querytype']
+            useaction = '* ' if result['useaction'] else ''
+
+            if querytype == 'MATCHALL': querytype = '='
+            elif querytype == 'LITERAL': querytype = '!'
+            elif querytype == 'FUZZY': querytype = '~'
+            else: querytype = '?'
+
+            docnum = results.docnum(index)
+
+            if trigger not in responses:
+                responses[trigger] = list()
+
+            responses[trigger].append((docnum, response, querytype, useaction))
+
+        # Iterate through responses
+        for k, v in responses.items():
+            start = '[' + k + ' # '
+            curstr = start
+            for x in v:
+                docnum, response, querytype, useaction = x
+                new = '{d}: {q} {u}{r} & '.format(d=docnum, q=querytype,
+                                                  u=useaction, r=response)
+                if len(curstr) + len(new) > limit:
+                    curstr = curstr[:-3]
+                    curstr += ']'
+                    self.cmdwrite('PRIVMSG', (target, curstr))
+                    curstr = start
+
+                curstr += new
+            
+            curstr = curstr[:-3]
+            curstr += ']'
+            self.cmdwrite('PRIVMSG', (target, curstr))
 
     def handle_quotedel_single(self, line, target, num):
         if not isinstance(num, int):
