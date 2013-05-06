@@ -15,6 +15,15 @@ import re
 # Globals deaugh
 ix = None
 
+parser = re.compile("""
+    \[(.+)\]        # Match first portion
+    (?:\W+)?        # Eat whitespace
+    ([~!=@\$\-])      # Type of command (addition predicates ~!=), @ (search), -
+                    # (delete), or $ (command)
+    (?:\W+)?        # Eat whitespace
+    \[(.+)\]        # Second portion
+""", re.VERBOSE|re.UNICODE)
+
 # XXX hardcoded
 admins = ['Elizacat', 'SilentPenguin']
 
@@ -24,11 +33,16 @@ def make_query(text):
 def select_query(message, results):
     newresults = []
     for result in results:
-        if result['querytype'] == 'MATCHALL':
-            # XXX is this correct?
-            if result['trigger'] not in message: continue
+        querytype = result['querytype']
+        trigger = result['trigger']
+        if querytype == 'MATCHALL':
+            if trigger not in message: continue
+        elif querytype == 'LITERAL':
+            if trigger != message: continue
+        elif querytype == 'FUZZY':
+            # Fall through
+            pass
         else:
-            # XXX
             continue
 
         newresults.append(result['response'])
@@ -62,21 +76,26 @@ class SockyIRCClient(client.IRCClient):
         if target[0] not in self.isupport['CHANTYPES']:
             target = line.hostmask.nick
 
+        useaction = False
         if message.startswith('\x01'):
             # CTCP stripping
             message = message.strip('\x01')
-            junk, sep, message = message.partition(' ')
+            type_, sep, message = message.partition(' ')
+
+            if type_.lower() == 'action':
+                useaction = True
 
         if message.startswith(self.current_nick):
             # Cut off the nick
             newmessage = message[len(self.current_nick):]
 
             # Cut off non-alphanum
-            while newmessage and (not newmessage[0].isalnum()):
+            while (newmessage and (not newmessage[0].isalnum()) and
+                   (newmessage[0] not in ('[', ']'))):
                 newmessage = newmessage[1:]
 
             if newmessage:
-                self.handle_command(line, target, newmessage)
+                self.handle_command(line, target, newmessage, useaction)
                 return
 
         # Check last said time
@@ -98,7 +117,7 @@ class SockyIRCClient(client.IRCClient):
 
         self.lastsaid = time.time()
 
-    def handle_command(self, line, target, message):
+    def handle_command(self, line, target, message, useaction):
         nick = self.nickchan_lower(line.hostmask.nick)
 
         if nick not in self.users: return
@@ -108,48 +127,88 @@ class SockyIRCClient(client.IRCClient):
         # No account?
         if not account or account == '*': return
 
+        # Not an admin?
         if account not in admins: return
 
-        command, sep, params = message.partition(' ')
-        command = command.lower()
-
-        if command == 'add': self.handle_quoteadd(line, target, params)
-        elif command == 'del': self.handle_quotedel(line, target, params)
-        elif command == 'quit': self.quitme()
-    
-    def quitme(self):
-        self.quitme = True
-        self.cmdwrite('QUIT')
-
-    def handle_quoteadd(self, line, target, params):
-        # XXX Different types
-        parsed = re.match('\[(.+)\]\W?=\W?\[(.+)\]', params)
-
+        # Parse
+        parsed = parser.match(message)
+        print(message, parsed)
         if not parsed: return
 
-        trigger, response = parsed.groups()
-        trigger = trigger.lower()
+        # Split
+        firstparam, type_, secondparam = parsed.groups()
+        firstparam = firstparam.lower()
 
+        if type_ in ('=', '!', '~'):
+            # Add
+            if type_ == '=':
+                type_ = 'MATCHALL'
+            elif type_ == '!':
+                type_ = 'LITERAL'
+            elif type_ == '~':
+                type_ = 'FUZZY'
+            else:
+                return
+
+            self.handle_quoteadd(line, target, firstparam, type_, secondparam,
+                                 useaction)
+        elif type_ == '@':
+            # TODO - search
+            return
+        elif type_ == '-':
+            # Delete
+            if firstparam == 'all':
+                self.handle_quotedel_all(line, target, secondparam)
+            elif firstparam.startswith('num'):
+                self.handle_quotedel_single(line, target, secondparam)
+            else:
+                return
+        elif type_ == '$':
+            if firstparam == 'quit':
+                self.quitme(secondparam)
+            else:
+                return
+        else:
+            return
+    
+    def quitme(self, message=''):
+        self.quitme = True
+        self.cmdwrite('QUIT', (message,))
+
+    def handle_quoteadd(self, line, target, trigger, type_, response, useaction):
         writer = ix.writer()
         try:
-            writer.add_document(trigger=trigger, querytype='MATCHALL',
-                                response=response)
+            writer.add_document(trigger=trigger, querytype=type_,
+                                response=response, useaction=useaction)
         except Exception as e:
             self.cmdwrite('PRIVMSG', (target, 'Error: ' + str(e)))
             return
 
         writer.commit()
-        self.cmdwrite('PRIVMSG', (target, 'Done'))
+        if useaction:
+            self.ctcpwrite(target, 'ACTION', 'Your humour has been added to the hive')
+        else:
+            self.cmdwrite('PRIVMSG', (target, 'Your humour has been added to the hive'))
 
-    def handle_quotedel(self, line, target, params):
-        # XXX delete by ID
-        parsed = re.match('\[(.+)\]', params)
+    def handle_quotedel_single(self, line, target, num):
+        if not isinstance(num, int):
+            try:
+                num = int(num)
+            except ValueError:
+                self.cmdwrite('PRIVMSG', (target, 'Dumbass.'))
+                return
 
-        if not parsed: return
+        writer = ix.writer()
+        try:
+            writer.delete_document(num)
+        except Exception as e:
+            self.cmdwrite('PRIVMSG', (target, 'Error: ' + str(e)))
+            return
 
-        trigger = parsed.group(1)
-        trigger = trigger.lower()
+        writer.commit()
+        self.cmdwrite('PRIVMSG', (target, 'Humour has been removed from the hive'))
 
+    def handle_quotedel_all(self, line, target, trigger):
         writer = ix.writer()
         try:
             writer.delete_by_term('trigger', trigger)
@@ -158,8 +217,7 @@ class SockyIRCClient(client.IRCClient):
             return
 
         writer.commit()
-        self.cmdwrite('PRIVMSG', (target, 'Done'))
-
+        self.cmdwrite('PRIVMSG', (target, 'Humour has been purged from the hive'))
 
 def run(instance):
     try:
@@ -183,7 +241,7 @@ kwargs = {
 # Initalise the DB or create it
 if not os.path.exists("index"):
     schema = Schema(trigger=TEXT(stored=True, chars=True, vector=True),
-                    querytype=STORED, response=STORED)
+                    querytype=STORED, useaction=STORED, response=STORED)
     os.mkdir("index")
     ix = create_in("index", schema)
 else:
