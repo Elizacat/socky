@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: UTF-8 -*-
 
-from whoosh.fields import Schema, TEXT, STORED, ID 
+from whoosh.fields import Schema, TEXT, STORED, ID, DATETIME, BOOLEAN
 from whoosh.index import create_in, open_dir
 from whoosh.query import Term, FuzzyTerm, Or, And
 from whoosh.analysis import RegexTokenizer, LowercaseFilter 
@@ -9,6 +9,7 @@ from whoosh.analysis import RegexTokenizer, LowercaseFilter
 from irclib.client import client
 from irclib.common.line import Line
 
+from datetime import datetime
 from functools import partial
 from collections import OrderedDict, defaultdict
 import shelve
@@ -20,12 +21,14 @@ import re
 ix = None
 
 parser = re.compile("""
+    (?:\s+)?        # Leading whitespace
     \[(.+)\]        # Match first portion
-    (?:\W+)?        # Eat whitespace
+    (?:\s+)?        # Eat whitespace
     ([~!=@\-\#\$])  # Type of command (addition predicates ~!=), @ (search), -
                     # (delete), # (chan event), or $ (command)
-    (?:\W+)?        # Eat whitespace
+    (?:\s+)?        # Eat whitespace
     \[(.+)\]        # Second portion
+    (?:\s+)?        # Eat trailing whitespace
 """, re.VERBOSE|re.UNICODE)
 
 # Bootstrap admins (always allowed)
@@ -107,8 +110,8 @@ class SockyIRCClient(client.IRCClient):
         # Don't trigger on ourselves
         if nick == self.current_nick: return
 
-        searcher = ix.searcher()
-        results = searcher.search(Term('querytype', 'JOIN'))
+        with ix.searcher() as searcher:
+            results = searcher.search(Term('querytype', 'JOIN'))
         if len(results) == 0: return
 
         response = random.choice(results)['response']
@@ -129,8 +132,8 @@ class SockyIRCClient(client.IRCClient):
         # Don't trigger on ourselves
         if nick == self.current_nick: return
 
-        searcher = ix.searcher()
-        results = searcher.search(Term('querytype', 'EXIT'))
+        with ix.searcher() as searcher:
+            results = searcher.search(Term('querytype', 'EXIT'))
         if len(results) == 0: return
 
         response = random.choice(results)['response']
@@ -149,8 +152,8 @@ class SockyIRCClient(client.IRCClient):
         # Don't trigger on ourselves
         if nick == self.current_nick: return
 
-        searcher = ix.searcher()
-        results = searcher.search(Term('querytype', 'EXIT'))
+        with ix.searcher() as searcher:
+            results = searcher.search(Term('querytype', 'EXIT'))
         if len(results) == 0: return
 
         response = random.choice(results)['response']
@@ -198,15 +201,16 @@ class SockyIRCClient(client.IRCClient):
             return
 
         query = make_query(message)
-        searcher = ix.searcher()
-        results = searcher.search(query)
-        if len(results) == 0: return
 
-        response = select_query(message, results)
-        if not response: return
+        with ix.searcher() as searcher:
+            results = searcher.search(query)
+            if len(results) == 0: return
 
-        response = build_response(response, who=line.hostmask.nick,
-                                  where=target, mynick=self.current_nick)
+            response = select_query(message, results)
+            if not response: return
+
+            response = build_response(response, who=line.hostmask.nick,
+                                      where=target, mynick=self.current_nick)
 
         sayfunc = partial(self.cmdwrite, 'PRIVMSG', (target, response))
         self.timer_oneshot('socky_spew', random.randint(10, 50) / 10, sayfunc)
@@ -314,8 +318,10 @@ class SockyIRCClient(client.IRCClient):
 
         writer = ix.writer()
         try:
+            account = self.users[self.nickchan_lower(line.hostmask.nick)].account
             writer.add_document(trigger=trigger, querytype=type_,
-                                response=response, useaction=useaction)
+                                response=response, useaction=useaction,
+                                who=account, time=datetime.now())
         except Exception as e:
             self.cmdwrite('PRIVMSG', (target, 'Error: ' + str(e)))
             return
@@ -329,37 +335,43 @@ class SockyIRCClient(client.IRCClient):
     def handle_triggersearch(self, line, target, searchterm):
         limit = 425 # rather arbitrary
 
-        query = make_query(searchterm)
-        searcher = ix.searcher()
-        results = searcher.search(query)
-        if len(results) == 0:
-            self.cmdwrite('PRIVMSG', (target, 'Drawing a blank here :/'))
-            return
-
         responses = OrderedDict()
-        for index, result in enumerate(results):
-            trigger = result['trigger']
-            response = result['response']
-            querytype = result['querytype']
-            useaction = '* ' if result['useaction'] else ''
 
-            querytype = types[querytype]
+        query = make_query(searchterm)
+        with ix.searcher() as searcher:
+            results = searcher.search(query)
+            if len(results) == 0:
+                self.cmdwrite('PRIVMSG', (target, 'Drawing a blank here :/'))
+                return
 
-            docnum = results.docnum(index)
+            responses = OrderedDict()
+            for index, result in enumerate(results):
+                trigger = result['trigger']
+                response = result['response']
+                querytype = result['querytype']
+                who = 'Unknown' if not result['who'] else result['who']
+                time = 'Unknown' if not result['time'] else result['time']
+                useaction = '* ' if result['useaction'] else ''
 
-            if trigger not in responses:
-                responses[trigger] = list()
+                querytype = types[querytype]
 
-            responses[trigger].append((docnum, response, querytype, useaction))
+                docnum = results.docnum(index)
+
+                if trigger not in responses:
+                    responses[trigger] = list()
+
+                responses[trigger].append((docnum, response, querytype, useaction,
+                                           who, time))
 
         # Iterate through responses
         for k, v in responses.items():
-            start = '[' + k + ' # '
+            start = '[' + k + ' | '
             curstr = start
             for x in v:
-                docnum, response, querytype, useaction = x
-                new = '{d}: {q} {u}{r} & '.format(d=docnum, q=querytype,
-                                                  u=useaction, r=response)
+                docnum, response, querytype, useaction, who, time = x
+                new = '{d} {{{w} {t}}}: {q} {u}{r} & '.format(d=docnum, q=querytype,
+                                                              u=useaction, r=response,
+                                                              w=who, t=time)
                 if len(curstr) + len(new) > limit:
                     curstr = curstr[:-3]
                     curstr += ']'
@@ -367,19 +379,19 @@ class SockyIRCClient(client.IRCClient):
                     curstr = start
 
                 curstr += new
-            
+
             curstr = curstr[:-3]
             curstr += ']'
             self.cmdwrite('PRIVMSG', (target, curstr))
 
     def handle_triggersearch_event(self, line, target, event):
+        # XXX FIXME TODO not yet finished!
         limit = 425 # rather arbitrary
 
         event = event.upper()
         query = And(Term('querytype', event))
-        searcher = ix.searcher()
-        
-        
+        with ix.searcher() as searcher:
+            pass
 
     def handle_triggerdel_single(self, line, target, num):
         if not isinstance(num, int):
@@ -474,9 +486,12 @@ kwargs = {
 
 # Initalise the DB or create it
 if not os.path.exists("index"):
-    analyzer = LowercaseFilter()
+    analyzer = RegexTokenizer('[\w:;=]+') | LowercaseFilter()
     trigtype = TEXT(stored=True, chars=True, vector=True, analyzer=analyzer)
-    schema = Schema(trigger=trigtype, querytype=ID(stored=True), useaction=STORED, response=STORED)
+    schema = Schema(trigger=trigtype, querytype=ID(stored=True),
+                    useaction=BOOLEAN(stored=True),
+                    response=TEXT(stored=True, chars=True),
+                    who=ID(stored=True), time=NUMERIC(stored=True))
     os.mkdir("index")
     ix = create_in("index", schema)
 else:
