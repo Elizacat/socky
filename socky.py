@@ -225,6 +225,8 @@ class SockyIRCClient(client.IRCClient):
         # Split
         firstparam, type_, secondparam = parsed.groups()
         firstparam = firstparam.lower()
+        # Replace bot's current nickname with a placeholder
+        secondparam = secondparam.replace(self.nick, '{mynick}')
 
         types = {
             '=':'MATCHALL',
