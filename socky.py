@@ -3,7 +3,7 @@
 
 from whoosh.fields import Schema, TEXT, STORED, ID 
 from whoosh.index import create_in, open_dir
-from whoosh.query import Term, FuzzyTerm, Or
+from whoosh.query import Term, FuzzyTerm, Or, And
 from whoosh.analysis import StemmingAnalyzer
 
 from irclib.client import client
@@ -218,7 +218,9 @@ class SockyIRCClient(client.IRCClient):
         account = self.users[nick].account
 
         # No account?
-        if not account or account == '*': return
+        if not account or account == '*':
+            print('No account for', nick)
+            return
 
         account = account.lower()
 
@@ -229,7 +231,9 @@ class SockyIRCClient(client.IRCClient):
 
         # Parse
         parsed = parser.match(message)
-        if not parsed: return
+        if not parsed:
+            print('Malformed message', parsed)
+            return
 
         # Split
         firstparam, type_, secondparam = parsed.groups()
@@ -237,23 +241,23 @@ class SockyIRCClient(client.IRCClient):
         # Replace bot's current nickname with a placeholder
         secondparam = secondparam.replace(self.nick, '{mynick}')
 
-        if type_ in types:
+        if type_ in reversetypes:
             # Add
-            type_ = types[type_]
-            self.handle_quoteadd(line, target, firstparam, type_, secondparam,
+            type_ = reversetypes[type_]
+            self.handle_triggeradd(line, target, firstparam, type_, secondparam,
                                  useaction)
         elif type_ == '@':
             if firstparam == 'text':
-                self.handle_quotesearch(line, target, secondparam)
+                self.handle_triggersearch(line, target, secondparam)
             else:
                 # TODO other types, e.g. ID
                 return
         elif type_ == '-':
             # Delete
             if firstparam == 'all':
-                self.handle_quotedel_all(line, target, secondparam)
+                self.handle_triggerdel_all(line, target, secondparam)
             elif firstparam.startswith('num'):
-                self.handle_quotedel_single(line, target, secondparam)
+                self.handle_triggerdel_single(line, target, secondparam)
             else:
                 return
         elif type_ == '$':
@@ -273,7 +277,7 @@ class SockyIRCClient(client.IRCClient):
                 secondparam = secondparam.lower()
                 self.del_admin(secondparam)
                 self.cmdwrite('PRIVMSG', (target, 'Boss has been removed from the obedience file'))
-            elif firstparam == 'nickinfo':
+            elif firstparam == 'nickinfo' or firstparam == 'userinfo':
                 secondparam = self.nickchan_lower(secondparam)
                 if secondparam in self.users:
                     account = self.users[secondparam].account
@@ -283,16 +287,19 @@ class SockyIRCClient(client.IRCClient):
                         self.cmdwrite('PRIVMSG', (target, 'User is not logged in'))
                 else:
                      self.cmdwrite('PRIVMSG', (target, 'User is unknown to me'))
-            else:
-                return
-        else:
-            return
-    
+            elif firstparam == 'adminlist':
+                # Second parameter not used
+                if hasattr(self, 'admins'):
+                    adminlist = ' '.join(self.admins)
+                    self.cmdwrite('PRIVMSG', (target, 'Admins: ' + adminlist))
+                else:
+                    self.cmdwrite('PRIVMSG', (target, 'No known admins'))
+
     def quitme(self, message=''):
         self.quitme = True
         self.cmdwrite('QUIT', (message,))
 
-    def handle_quoteadd(self, line, target, trigger, type_, response, useaction):
+    def handle_triggeradd(self, line, target, trigger, type_, response, useaction):
         if type_ == 'CHANEVENT':
             if trigger.startswith('join'):
                 type_ = 'JOIN'
@@ -316,7 +323,7 @@ class SockyIRCClient(client.IRCClient):
         else:
             self.cmdwrite('PRIVMSG', (target, 'Your humour has been added to the hive'))
 
-    def handle_quotesearch(self, line, target, searchterm):
+    def handle_triggersearch(self, line, target, searchterm):
         limit = 425 # rather arbitrary
 
         query = make_query(searchterm)
@@ -333,7 +340,7 @@ class SockyIRCClient(client.IRCClient):
             querytype = result['querytype']
             useaction = '* ' if result['useaction'] else ''
 
-            querytype = reversetypes[querytype]
+            querytype = types[querytype]
 
             docnum = results.docnum(index)
 
@@ -362,7 +369,16 @@ class SockyIRCClient(client.IRCClient):
             curstr += ']'
             self.cmdwrite('PRIVMSG', (target, curstr))
 
-    def handle_quotedel_single(self, line, target, num):
+    def handle_triggersearch_event(self, line, target, event):
+        limit = 425 # rather arbitrary
+
+        event = event.upper()
+        query = And(Term('querytype', event))
+        searcher = ix.searcher()
+        
+        
+
+    def handle_triggerdel_single(self, line, target, num):
         if not isinstance(num, int):
             try:
                 num = int(num)
@@ -380,7 +396,7 @@ class SockyIRCClient(client.IRCClient):
         writer.commit()
         self.cmdwrite('PRIVMSG', (target, 'Humour has been removed from the hive'))
 
-    def handle_quotedel_all(self, line, target, trigger):
+    def handle_triggerdel_all(self, line, target, trigger):
         writer = ix.writer()
         try:
             writer.delete_by_term('trigger', trigger)
