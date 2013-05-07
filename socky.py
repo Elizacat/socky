@@ -54,7 +54,7 @@ def select_query(message, results):
     message = filter_message(message)
     for result in results:
         querytype = result['querytype']
-        trigger = result['trigger'].lower()
+        trigger = filter_message(result['trigger'])
         if querytype == 'MATCHALL':
             if trigger not in message: continue
         elif querytype == 'LITERAL':
@@ -134,13 +134,13 @@ class SockyIRCClient(client.IRCClient):
 
         with ix.searcher() as searcher:
             results = searcher.search(Term('querytype', 'EXIT'))
-        if len(results) == 0: return
+            if len(results) == 0: return
 
-        response = random.choice(results)['response']
-        response = build_response(response, who=nick, where=target,
-                                  mynick=self.current_nick)
-        sayfunc = partial(self.cmdwrite, 'PRIVMSG', (target, response))
-        self.timer_oneshot('socky_exitspew', random.randint(10, 30) / 10, sayfunc)
+            response = random.choice(results)['response']
+            response = build_response(response, who=nick, where=target,
+                                      mynick=self.current_nick)
+            sayfunc = partial(self.cmdwrite, 'PRIVMSG', (target, response))
+            self.timer_oneshot('socky_exitspew', random.randint(10, 30) / 10, sayfunc)
 
     def handle_kick(self, discard, line):
         if not line.hostmask: return
@@ -154,14 +154,14 @@ class SockyIRCClient(client.IRCClient):
 
         with ix.searcher() as searcher:
             results = searcher.search(Term('querytype', 'EXIT'))
-        if len(results) == 0: return
+            if len(results) == 0: return
 
-        response = random.choice(results)['response']
-        response = build_response(response, who=nick, where=target,
-                                  mynick=self.current_nick)
-        sayfunc = partial(self.cmdwrite, 'PRIVMSG', (target, response))
-        self.timer_oneshot('socky_exitspew', random.randint(10, 30) / 10,
-                           sayfunc)
+            response = random.choice(results)['response']
+            response = build_response(response, who=nick, where=target,
+                                    mynick=self.current_nick)
+            sayfunc = partial(self.cmdwrite, 'PRIVMSG', (target, response))
+            self.timer_oneshot('socky_exitspew', random.randint(10, 30) / 10,
+                            sayfunc)
 
     def handle_privmsg(self, discard, line):
         if len(line.params) <= 1: return
