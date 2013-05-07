@@ -37,9 +37,10 @@ def make_query(text):
 
 def select_query(message, results):
     newresults = []
+    message = message.lower()
     for result in results:
         querytype = result['querytype']
-        trigger = result['trigger']
+        trigger = result['trigger'].lower()
         if querytype == 'MATCHALL':
             if trigger not in message: continue
         elif querytype == 'LITERAL':
@@ -182,7 +183,7 @@ class SockyIRCClient(client.IRCClient):
                 return
 
         # Check last said time
-        if time.time() - self.lastsaid < 60:
+        if time.time() - self.lastsaid < 1800:
             return
 
         query = make_query(message)
@@ -272,6 +273,16 @@ class SockyIRCClient(client.IRCClient):
                 secondparam = secondparam.lower()
                 self.del_admin(secondparam)
                 self.cmdwrite('PRIVMSG', (target, 'Boss has been removed from the obedience file'))
+            elif firstparam == 'nickinfo':
+                secondparam = self.nickchan_lower(secondparam)
+                if secondparam in self.users:
+                    account = self.users[secondparam].account
+                    if account and account != '*':
+                        self.cmdwrite('PRIVMSG', (target, 'User is logged in as: ' + account))
+                    else:
+                        self.cmdwrite('PRIVMSG', (target, 'User is not logged in'))
+                else:
+                     self.cmdwrite('PRIVMSG', (target, 'User is unknown to me'))
             else:
                 return
         else:
