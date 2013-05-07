@@ -30,7 +30,6 @@ parser = re.compile("""
 
 # Bootstrap admins (always allowed)
 admins = ['Elizacat', 'SilentPenguin']
-cfgadmins = []
 
 def make_query(text):
     return Or([FuzzyTerm('trigger', t) for t in text.split()]) 
