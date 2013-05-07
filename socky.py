@@ -269,22 +269,27 @@ class SockyIRCClient(client.IRCClient):
                 return
         elif type_ == '$':
             if firstparam == 'quit':
+                # Exit!
                 self.cmdwrite('PRIVMSG', (target, 'Adios'))
                 self.quitme(secondparam)
             elif firstparam == 'reload':
+                # Reloading stuff
                 secondparam = secondparam.lower()
                 if secondparam.startswith('admin'):
                     self.load_admins()
                     self.cmdwrite('PRIVMSG', (target, 'As you wish.'))
             elif firstparam == 'addadmin':
+                # Add an admin
                 secondparam = secondparam.lower()
                 self.add_admin(secondparam)
                 self.cmdwrite('PRIVMSG', (target, 'New boss added to the obedience file'))
             elif firstparam == 'deladmin':
+                # Delete an admin
                 secondparam = secondparam.lower()
                 self.del_admin(secondparam)
                 self.cmdwrite('PRIVMSG', (target, 'Boss has been removed from the obedience file'))
             elif firstparam == 'nickinfo' or firstparam == 'userinfo':
+                # Nick info
                 secondparam = self.nickchan_lower(secondparam)
                 if secondparam in self.users:
                     account = self.users[secondparam].account
@@ -301,6 +306,10 @@ class SockyIRCClient(client.IRCClient):
                     self.cmdwrite('PRIVMSG', (target, 'Admins: ' + adminlist))
                 else:
                     self.cmdwrite('PRIVMSG', (target, 'No known admins'))
+            elif firstparam.startswith('quiet') or firstparam.startswith('shut up'):
+                # Shut up for an hour
+                self.lastsaid = time.time() + 3600
+                self.cmdwrite('PRIVMSG', (target, 'Clammin\' it up!'))
 
     def quitme(self, message=''):
         self.quitme = True
