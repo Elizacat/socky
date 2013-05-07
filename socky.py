@@ -4,7 +4,7 @@
 from whoosh.fields import Schema, TEXT, STORED, ID 
 from whoosh.index import create_in, open_dir
 from whoosh.query import Term, FuzzyTerm, Or, And
-from whoosh.analysis import StemmingAnalyzer
+from whoosh.analysis import RegexTokenizer, LowercaseFilter 
 
 from irclib.client import client
 from irclib.common.line import Line
@@ -43,9 +43,12 @@ reversetypes = defaultdict(partial(str, 'UNKNOWN'), {v : k for k, v in types.ite
 def make_query(text):
     return Or([FuzzyTerm('trigger', t) for t in text.split()]) 
 
+def filter_message(message):
+    return re.sub('[\-\$\+\~\?]', ' ', message.lower())
+
 def select_query(message, results):
     newresults = []
-    message = message.lower()
+    message = filter_message(message)
     for result in results:
         querytype = result['querytype']
         trigger = result['trigger'].lower()
@@ -471,7 +474,8 @@ kwargs = {
 
 # Initalise the DB or create it
 if not os.path.exists("index"):
-    trigtype = TEXT(stored=True, chars=True, vector=True)
+    analyzer = LowercaseFilter()
+    trigtype = TEXT(stored=True, chars=True, vector=True, analyzer=analyzer)
     schema = Schema(trigger=trigtype, querytype=ID(stored=True), useaction=STORED, response=STORED)
     os.mkdir("index")
     ix = create_in("index", schema)
