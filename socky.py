@@ -33,7 +33,7 @@ admins = ['Elizacat', 'SilentPenguin']
 cfgadmins = []
 
 def make_query(text):
-    return Or([FuzzyTerm('trigger', t, maxdist=2) for t in text.split()]) 
+    return Or([FuzzyTerm('trigger', t) for t in text.split()]) 
 
 def select_query(message, results):
     newresults = []
@@ -214,7 +214,9 @@ class SockyIRCClient(client.IRCClient):
         account = account.lower()
 
         # Not an admin?
-        if account not in self.admins: return
+        if account not in self.admins:
+            print('Permission denied for account', account)
+            return
 
         # Parse
         parsed = parser.match(message)
@@ -383,13 +385,13 @@ class SockyIRCClient(client.IRCClient):
 
     def load_admins(self):
         # Bootstrap admins
-        self.admins = set(x.lower() for x in admins)
+        self.admins = set([x.lower() for x in admins])
 
         s = shelve.open(self.db)
         if 'admins' not in s:
             s['admins'] = set()
 
-        self.admins = self.admins.union(admins)
+        self.admins = self.admins.union(s['admins'])
 
         s.close()
 
@@ -445,10 +447,8 @@ kwargs = {
 
 # Initalise the DB or create it
 if not os.path.exists("index"):
-    analyzer = StemmingAnalyzer()
-    trigtype = TEXT(stored=True, chars=True, vector=True, analyzer=analyzer)
-    schema = Schema(trigger=trigtype,
-                    querytype=ID(stored=True), useaction=STORED, response=STORED)
+    trigtype = TEXT(stored=True, chars=True, vector=True)
+    schema = Schema(trigger=trigtype, querytype=ID(stored=True), useaction=STORED, response=STORED)
     os.mkdir("index")
     ix = create_in("index", schema)
 else:
