@@ -226,19 +226,16 @@ class SockyIRCClient(client.IRCClient):
         firstparam, type_, secondparam = parsed.groups()
         firstparam = firstparam.lower()
 
-        if type_ in ('=', '!', '~', '#'):
-            # Add
-            if type_ == '=':
-                type_ = 'MATCHALL'
-            elif type_ == '!':
-                type_ = 'LITERAL'
-            elif type_ == '~':
-                type_ = 'FUZZY'
-            elif type_ == '#':
-                type_ = 'CHANEVENT'
-            else:
-                return
+        types = {
+            '=':'MATCHALL',
+            '!':'LITERAL',
+            '~':'FUZZY',
+            '#':'CHANEVENT'
+        }
 
+        if type_ in types:
+            # Add
+            type_ = types[type_]
             self.handle_quoteadd(line, target, firstparam, type_, secondparam,
                                  useaction)
         elif type_ == '@':
