@@ -10,7 +10,7 @@ from irclib.client import client
 from irclib.common.line import Line
 
 from functools import partial
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 import shelve
 import random
 import os, time
@@ -30,6 +30,15 @@ parser = re.compile("""
 
 # Bootstrap admins (always allowed)
 admins = ['Elizacat', 'SilentPenguin']
+
+types = defaultdict(partial(str, '?'), {
+    'MATCHALL' : '=',
+    'LITERAL' : '!',
+    'FUZZY' : '~',
+    'CHANTYPES' : '#',
+})
+
+reversetypes = defaultdict(partial(str, 'UNKNOWN'), {v : k for k, v in types.items()})
 
 def make_query(text):
     return Or([FuzzyTerm('trigger', t) for t in text.split()]) 
@@ -228,13 +237,6 @@ class SockyIRCClient(client.IRCClient):
         # Replace bot's current nickname with a placeholder
         secondparam = secondparam.replace(self.nick, '{mynick}')
 
-        types = {
-            '=':'MATCHALL',
-            '!':'LITERAL',
-            '~':'FUZZY',
-            '#':'CHANEVENT'
-        }
-
         if type_ in types:
             # Add
             type_ = types[type_]
@@ -317,7 +319,7 @@ class SockyIRCClient(client.IRCClient):
     def handle_quotesearch(self, line, target, searchterm):
         limit = 425 # rather arbitrary
 
-        query = make_query(searchterm.lower())
+        query = make_query(searchterm)
         searcher = ix.searcher()
         results = searcher.search(query)
         if len(results) == 0:
@@ -331,10 +333,7 @@ class SockyIRCClient(client.IRCClient):
             querytype = result['querytype']
             useaction = '* ' if result['useaction'] else ''
 
-            if querytype == 'MATCHALL': querytype = '='
-            elif querytype == 'LITERAL': querytype = '!'
-            elif querytype == 'FUZZY': querytype = '~'
-            else: querytype = '?'
+            querytype = reversetypes[querytype]
 
             docnum = results.docnum(index)
 
