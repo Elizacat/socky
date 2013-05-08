@@ -112,13 +112,13 @@ class SockyIRCClient(client.IRCClient):
 
         with ix.searcher() as searcher:
             results = searcher.search(Term('querytype', 'JOIN'))
-        if len(results) == 0: return
+            if len(results) == 0: return
 
-        response = random.choice(results)['response']
-        response = build_response(response, who=nick, where=target,
-                                  mynick=self.current_nick)
-        sayfunc = partial(self.cmdwrite, 'PRIVMSG', (target, response))
-        self.timer_oneshot('socky_joinspew', random.randint(10, 30) / 10, sayfunc)
+            response = random.choice(results)['response']
+            response = build_response(response, who=nick, where=target,
+                                      mynick=self.current_nick)
+            sayfunc = partial(self.cmdwrite, 'PRIVMSG', (target, response))
+            self.timer_oneshot('socky_joinspew', random.randint(10, 30) / 10, sayfunc)
 
     def handle_exit(self, discard, line):
         if not line.hostmask: return
@@ -306,16 +306,21 @@ class SockyIRCClient(client.IRCClient):
                     self.cmdwrite('PRIVMSG', (target, 'Admins: ' + adminlist))
                 else:
                     self.cmdwrite('PRIVMSG', (target, 'No known admins'))
-            elif firstparam.startswith('quiet') or firstparam.startswith('shut up'):
+            elif (firstparam.startswith('quiet') or firstparam.startswith('shut up')
+                  or firstparam.startswith('shutup')):
                 # Shut up for an hour
                 self.lastsaid = time.time() + 3600
                 self.cmdwrite('PRIVMSG', (target, 'Clammin\' it up!'))
+            elif (firstparam.startswith('speak') or firstparam.startswith('talk')):
+                self.lastsaid = time.time() - 1800
+                self.cmdwrite('PRIVMSG', (target, 'Yay! My muzzle is off!'))
 
     def quitme(self, message=''):
         self.quitme = True
         self.cmdwrite('QUIT', (message,))
 
     def handle_triggeradd(self, line, target, trigger, type_, response, useaction):
+        trigger = filter_message(trigger)
         if type_ == 'CHANEVENT':
             if trigger.startswith('join'):
                 type_ = 'JOIN'
