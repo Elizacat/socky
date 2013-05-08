@@ -43,8 +43,8 @@ types = defaultdict(partial(str, '?'), {
 
 reversetypes = defaultdict(partial(str, 'UNKNOWN'), {v : k for k, v in types.items()})
 
-def make_query(text):
-    return Or([FuzzyTerm('trigger', t) for t in text.split()]) 
+def make_query(text, querytype='trigger'):
+    return Or([FuzzyTerm(querytype, t) for t in text.split()]) 
 
 def filter_message(message):
     return re.sub('[\-\$\+\~\?]', ' ', message.lower())
@@ -256,6 +256,9 @@ class SockyIRCClient(client.IRCClient):
         elif type_ == '@':
             if firstparam == 'text':
                 self.handle_triggersearch(line, target, secondparam)
+            elif firstparam in ('exit', 'join', 'part', 'quit'):
+                if firstparam in ('part', 'quit'): firstparam = 'exit'
+                self.handle_triggersearch_event(line, target, firstparam, secondparam)
             else:
                 # TODO other types, e.g. ID
                 return
@@ -364,7 +367,7 @@ class SockyIRCClient(client.IRCClient):
                 response = result['response']
                 querytype = result['querytype']
                 who = 'Unknown' if not result['who'] else result['who']
-                time = 'Unknown' if not result['time'] else result['time']
+                time = 'Unknown' if not result['time'] else result['time'].ctime()
                 useaction = '* ' if result['useaction'] else ''
 
                 querytype = types[querytype]
@@ -383,9 +386,9 @@ class SockyIRCClient(client.IRCClient):
             curstr = start
             for x in v:
                 docnum, response, querytype, useaction, who, time = x
-                new = '{d} {{{w} {t}}}: {q} {u}{r} & '.format(d=docnum, q=querytype,
-                                                              u=useaction, r=response,
-                                                              w=who, t=time)
+                new = '{d} {{{w} - {t}}}: {q} {u}{r} & '.format(d=docnum, q=querytype,
+                                                                u=useaction, r=response,
+                                                                w=who, t=time)
                 if len(curstr) + len(new) > limit:
                     curstr = curstr[:-3]
                     curstr += ']'
@@ -394,18 +397,50 @@ class SockyIRCClient(client.IRCClient):
 
                 curstr += new
 
-            curstr = curstr[:-3]
-            curstr += ']'
-            self.cmdwrite('PRIVMSG', (target, curstr))
+            if curstr != start:
+                curstr = curstr[:-3]
+                curstr += ']'
+                self.cmdwrite('PRIVMSG', (target, curstr))
 
-    def handle_triggersearch_event(self, line, target, event):
-        # XXX FIXME TODO not yet finished!
+    def handle_triggersearch_event(self, line, target, event, searchterm):
         limit = 425 # rather arbitrary
 
         event = event.upper()
-        query = And(Term('querytype', event))
+        print('Searching event', event)
+        query = And([make_query(searchterm, 'response'), Term('querytype', event)])
         with ix.searcher() as searcher:
-            pass
+            results = searcher.search(query)
+            if len(results) == 0:
+                self.cmdwrite('PRIVMSG', (target, 'I\'ve got nothing :/'))
+                return
+
+            start = '[' + event.lower() + ' | '
+            curstr = start
+            for index, result in enumerate(results):
+                response = result['response']
+                querytype = result['querytype']
+                who = 'Unknown' if not result['who'] else result['who']
+                time = 'Unknown' if not result['time'] else result['time'].ctime()
+                useaction = '* ' if result['useaction'] else ''
+
+                docnum = results.docnum(index)
+
+                new = '{d} {{{w} - {t}}}: # {u}{r} & '.format(d=docnum, u=useaction,
+                                                              r=response, w=who,
+                                                              t=time)
+
+                if len(curstr) + len(new) > limit:
+                    curstr = curstr[:-3]
+                    curstr += ']'
+                    self.cmdwrite('PRIVMSG', (target, curstr))
+                    curstr = start
+
+                curstr += new
+
+            if curstr != start:
+                curstr = curstr[:-3]
+                curstr += ']'
+                self.cmdwrite('PRIVMSG', (target, curstr))
 
     def handle_triggerdel_single(self, line, target, num):
         if not isinstance(num, int):
