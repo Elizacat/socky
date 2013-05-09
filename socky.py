@@ -6,8 +6,8 @@ from whoosh.index import create_in, open_dir
 from whoosh.query import Term, FuzzyTerm, Or, And
 from whoosh.analysis import RegexTokenizer, LowercaseFilter 
 
-from irclib.client import client
-from irclib.common.line import Line
+from PyIRC.client import client
+from PyIRC.common.line import Line
 
 from datetime import datetime
 from functools import partial
@@ -33,6 +33,10 @@ parser = re.compile("""
 
 # Bootstrap admins (always allowed)
 admins = ['Elizacat', 'SilentPenguin']
+
+# Defaults
+default_interval = 300
+default_shutup = 3600 - default_interval # an hour
 
 types = defaultdict(partial(str, '?'), {
     'MATCHALL' : '=',
@@ -90,7 +94,7 @@ class SockyIRCClient(client.IRCClient):
         self.lastsaid = 0
         self.db = kwargs.get('db', 'socky')
 
-        self.load_admins()
+        self.load_config()
 
         self.add_dispatch_in('PRIVMSG', 1000, self.handle_privmsg)
         self.add_dispatch_in('JOIN', 1000, self.handle_join)
@@ -197,7 +201,7 @@ class SockyIRCClient(client.IRCClient):
                 return
 
         # Check last said time
-        if time.time() - self.lastsaid < 1800:
+        if time.time() - self.lastsaid < self.interval:
             return
 
         query = make_query(message)
@@ -279,7 +283,7 @@ class SockyIRCClient(client.IRCClient):
                 # Reloading stuff
                 secondparam = secondparam.lower()
                 if secondparam.startswith('admin'):
-                    self.load_admins()
+                    self.load_config()
                     self.cmdwrite('PRIVMSG', (target, 'As you wish.'))
             elif firstparam == 'addadmin':
                 # Add an admin
@@ -291,6 +295,24 @@ class SockyIRCClient(client.IRCClient):
                 secondparam = secondparam.lower()
                 self.del_admin(secondparam)
                 self.cmdwrite('PRIVMSG', (target, 'Boss has been removed from the obedience file'))
+            elif firstparam == 'setshutup':
+                try:
+                    secondparam = int(secondparam)
+                except ValueError:
+                    self.cmdwrite('PRIVMSG', (target, 'No.'))
+                    return
+
+                self.set_shutup(secondparam)
+                self.cmdwrite('PRIVMSG', (target, 'The requisite adjustments are made.'))
+            elif firstparam == 'setinterval':
+                try:
+                    secondparam = int(secondparam)
+                except ValueError:
+                    self.cmdwrite('PRIVMSG', (target, 'Don\'t think so'))
+                    return
+
+                self.set_interval(secondparam)
+                self.cmdwrite('PRIVMSG', (target, 'My interval has been adjusted.'))
             elif firstparam == 'nickinfo' or firstparam == 'userinfo':
                 # Nick info
                 secondparam = self.nickchan_lower(secondparam)
@@ -311,11 +333,11 @@ class SockyIRCClient(client.IRCClient):
                     self.cmdwrite('PRIVMSG', (target, 'No known admins'))
             elif (firstparam.startswith('quiet') or firstparam.startswith('shut up')
                   or firstparam.startswith('shutup')):
-                # Shut up for an hour
-                self.lastsaid = time.time() + 3600
+                # Shut up for elapsed time
+                self.lastsaid = time.time() + abs(self.shutup - self.interval)
                 self.cmdwrite('PRIVMSG', (target, 'Clammin\' it up!'))
             elif (firstparam.startswith('speak') or firstparam.startswith('talk')):
-                self.lastsaid = time.time() - 1800
+                self.lastsaid = time.time() - self.interval
                 self.cmdwrite('PRIVMSG', (target, 'Yay! My muzzle is off!'))
 
     def quitme(self, message=''):
@@ -471,17 +493,73 @@ class SockyIRCClient(client.IRCClient):
         writer.commit()
         self.cmdwrite('PRIVMSG', (target, 'Humour has been purged from the hive'))
 
-    def load_admins(self):
+    def load_config(self):
+        s = shelve.open(self.db)
+
+        self.load_admins(s)
+        self.load_interval(s)
+        self.load_shutup(s)
+
+        s.close()
+
+    def load_interval(self, handle=None):
+        if not handle:
+            s = shelve.open(self.db)
+        else:
+            s = handle
+
+        if 'interval' not in s:
+            self.interval = s['interval'] = default_interval
+        else:
+            self.interval = s['interval']
+
+        if not handle:
+            s.close()
+
+    def set_interval(self, interval):
+        s = shelve.open(self.db)
+
+        self.interval = s['interval'] = interval
+
+        s.close()
+
+    def load_shutup(self, handle=None):
+        if not handle:
+            s = shelve.open(self.db)
+        else:
+            s = handle
+
+        if 'shutup' not in s:
+            self.shutup = s['shutup'] = default_shutup
+        else:
+            self.shutup = s['shutup']
+
+        if not handle:
+            s.close()
+
+    def set_shutup(self, shutup):
+        s = shelve.open(self.db)
+
+        self.shutup = s['shutup'] = shutup
+
+        s.close()
+
+    def load_admins(self, handle=None):
         # Bootstrap admins
         self.admins = set([x.lower() for x in admins])
 
-        s = shelve.open(self.db)
+        if not handle:
+            s = shelve.open(self.db)
+        else:
+            s = handle
+
         if 'admins' not in s:
             s['admins'] = set()
 
         self.admins = self.admins.union(s['admins'])
 
-        s.close()
+        if not handle:
+            s.close()
 
     def add_admin(self, admin):
         s = shelve.open(self.db)
@@ -526,7 +604,7 @@ kwargs = {
     'nick' : 'Socky',
     'host' : 'okami.interlinked.me',
     'port' : 6667,
-    'channels' : ['#irclib', '#sporks'],
+    'channels' : ['#sporks'],
     'use_sasl' : True,
     'sasl_username' : 'Socky',
     'sasl_pw' : 'changeme',
